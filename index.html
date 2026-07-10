@@ -256,6 +256,10 @@ textarea.inp{
 .cat-acc[aria-expanded="true"]{border-bottom:1px solid var(--bd2)}
 .cat-body:not([hidden]){border-top:none}
 .cat-hint{color:var(--s2)}
+.dash-presets{display:flex;gap:8px;flex-wrap:wrap}
+.dash-th{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--bd2);flex-wrap:wrap}
+.dash-th h3{font-family:var(--fh)}
+@media(max-width:720px){.dash-th{flex-direction:column;align-items:stretch}.dash-th .inp{max-width:none !important}}
 .item-row{
   grid-template-columns:1fr 92px !important;
   gap:12px !important;
@@ -490,7 +494,7 @@ const SUPABASE_URL = 'https://baxioajyrjfnmvpknaes.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJheGlvYWp5cmpmbm12cGtuYWVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwNjQ3NTYsImV4cCI6MjA5NDY0MDc1Nn0.OOLTbz5TTLaPCXVY7ntkSxjcZljFYSOkoCwBvHG4iLI';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const app = document.getElementById('app');
-let state = { session:null, profile:null, tab:'', catalog:[], categories:[], catalogError:null, reqs:[], reqItems:{}, selectedReq:null, toast:null, filters:{}, nav:[] };
+let state = { session:null, profile:null, tab:'', catalog:[], categories:[], catalogError:null, reqs:[], reqItems:{}, selectedReq:null, toast:null, filters:{}, nav:[], dash:{loading:false,rows:[],ini:'',fim:'',setor:'',categoria:'',q:'',sort:'qtd'} };
 const labelSetor={bar:'Bar',cozinha:'Cozinha',cumim:'Cumim'};
 const labelRole={admin:'ADM Geral',estoquista:'Estoquista',setor:'Setor'};
 const stL={pendente:'Pendente',separando:'Separando',entregue:'Entregue',cancelado:'Cancelado',lixeira:'Lixeira'};
@@ -536,7 +540,7 @@ function render(){if(!state.session||!state.profile){renderLogin();return;} cons
 function renderLogin(){app.innerHTML=`<div class="login-bg"><div class="login-card"><img src="logo-ilha.png" class="login-logo"><h1>NEXUS · Requisições</h1><p class="sub">Acesso online · Grupo Ilha do Caranguejo</p><form onsubmit="login(event)" class="grid"><div><label class="lbl">E-mail</label><input id="loginEmail" class="inp" type="email" autocomplete="username" placeholder="usuario@grupoilha.local" required></div><div><label class="lbl">Senha</label><input id="loginPass" class="inp" type="password" autocomplete="current-password" placeholder="Senha" required></div><button class="btn bp" style="width:100%;padding:14px">Entrar</button></form><div class="login-note">Caso ainda não tenha um login, entre em contato com o Administrador.</div></div><div class="login-credit">Desenvolvido por Vinicius Candido dos Santos · 2026</div></div>${state.toast?`<div class="toast">${esc(state.toast)}</div>`:''}`}
 async function login(e){e.preventDefault(); const email=document.getElementById('loginEmail').value.trim(); const password=document.getElementById('loginPass').value; const {error}=await sb.auth.signInWithPassword({email,password}); if(error) toast('Login ou senha inválidos.');}
 window.login=login;
-async function routeLoad(){const t=state.tab||navFor()[0][0]; if(['dashboard','requisicoes','painel','meus','lixeira'].includes(t)) await loadReqs(); if(['nova','catalogo'].includes(t)) await loadCatalog(); if(t==='usuarios') await loadUsers(); if(t==='auditoria') await loadAudit(); render();}
+async function routeLoad(){const t=state.tab||navFor()[0][0]; if(t==='dashboard') await loadDashboardData(); if(['requisicoes','painel','meus','lixeira'].includes(t)) await loadReqs(); if(['nova','catalogo'].includes(t)) await loadCatalog(); if(t==='usuarios') await loadUsers(); if(t==='auditoria') await loadAudit(); render();}
 async function loadCatalog(){
   state.catalogError=null;
   const {data:cats,error:catErr}=await sb.from('catalog_categories').select('id,setor,nome,ativo').order('setor').order('nome');
@@ -831,7 +835,145 @@ async function confirmReq(){
   }
 }
 window.confirmReq=confirmReq;
-function viewDashboard(){const arr=state.reqs.filter(r=>r.status!=='lixeira'); const total=arr.length, pend=arr.filter(r=>r.status==='pendente').length, sep=arr.filter(r=>r.status==='separando').length, ent=arr.filter(r=>r.status==='entregue').length, can=arr.filter(r=>r.status==='cancelado').length; const bySet={};arr.forEach(r=>bySet[r.setor]=(bySet[r.setor]||0)+1); const items={}; Object.values(state.reqItems).flat().forEach(i=>items[i.nome]=(items[i.nome]||0)+Number(i.qtd_solicitada)); const top=Object.entries(items).sort((a,b)=>b[1]-a[1]).slice(0,8); return `<div class="title row space"><div><h2>Dashboard</h2><p>Indicadores online do NEXUS Requisições</p></div><button class="btn bs bsm" onclick="exportCSV()">Exportar CSV</button></div><div class="grid g4" style="margin:14px 0"><div class="card stat"><strong>${total}</strong><span>Total</span></div><div class="card stat"><strong>${pend}</strong><span>Pendentes</span></div><div class="card stat"><strong>${sep}</strong><span>Separando</span></div><div class="card stat"><strong>${ent}</strong><span>Entregues</span></div></div><div class="grid g2"><div class="card" style="padding:16px"><h3>Requisições por setor</h3><table class="table"><tbody>${Object.entries(labelSetor).map(([k,v])=>`<tr><td>${v}</td><td><strong>${bySet[k]||0}</strong></td></tr>`).join('')}</tbody></table></div><div class="card" style="padding:16px"><h3>Itens mais solicitados</h3><table class="table"><tbody>${top.map(([n,q])=>`<tr><td>${esc(n)}</td><td><strong>${q}</strong></td></tr>`).join('')||'<tr><td>Nenhum dado ainda</td><td></td></tr>'}</tbody></table></div></div>`}
+function dashDefaults(){
+  if(!state.dash.ini||!state.dash.fim){
+    const now=new Date(); const first=new Date(now.getFullYear(),now.getMonth(),1);
+    const iso=d=>{const x=new Date(d);x.setMinutes(x.getMinutes()-x.getTimezoneOffset());return x.toISOString().slice(0,10);};
+    state.dash.ini=iso(first); state.dash.fim=iso(now);
+  }
+}
+function dashPreset(p){
+  const now=new Date();
+  const iso=d=>{const x=new Date(d);x.setMinutes(x.getMinutes()-x.getTimezoneOffset());return x.toISOString().slice(0,10);};
+  if(p==='hoje'){state.dash.ini=iso(now);state.dash.fim=iso(now);}
+  else if(p==='7'){const a=new Date(now);a.setDate(a.getDate()-6);state.dash.ini=iso(a);state.dash.fim=iso(now);}
+  else if(p==='30'){const a=new Date(now);a.setDate(a.getDate()-29);state.dash.ini=iso(a);state.dash.fim=iso(now);}
+  else if(p==='mes'){const a=new Date(now.getFullYear(),now.getMonth(),1);state.dash.ini=iso(a);state.dash.fim=iso(now);}
+  loadDashboardData();
+}
+window.dashPreset=dashPreset;
+function dashSetField(k,v){state.dash[k]=v; if(k==='ini'||k==='fim'){/* espera clique em Aplicar */} render();}
+window.dashSetField=dashSetField;
+async function loadDashboardData(){
+  dashDefaults();
+  state.dash.loading=true; render();
+  // Janela [ini 00:00, fim+1 00:00) sobre criado_em; apenas entregues.
+  const ini=state.dash.ini, fim=state.dash.fim;
+  const fimNext=(()=>{const d=new Date(fim+'T00:00:00');d.setDate(d.getDate()+1);d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,10);})();
+  const {data:reqs,error}=await sb.from('requisicoes')
+    .select('id,setor,numero,status,criado_em')
+    .eq('status','entregue')
+    .gte('criado_em',ini+'T00:00:00')
+    .lt('criado_em',fimNext+'T00:00:00')
+    .order('criado_em',{ascending:false});
+  if(error){state.dash.loading=false;toast(error.message);render();return;}
+  const ids=(reqs||[]).map(r=>r.id);
+  let itens=[];
+  if(ids.length){
+    // busca em lotes pra evitar limite de URL/linhas
+    for(let i=0;i<ids.length;i+=200){
+      const slice=ids.slice(i,i+200);
+      const {data:part,error:ie}=await sb.from('requisicao_itens')
+        .select('requisicao_id,categoria,nome,unidade,qtd_enviada')
+        .in('requisicao_id',slice);
+      if(ie){state.dash.loading=false;toast(ie.message);render();return;}
+      itens=itens.concat(part||[]);
+    }
+  }
+  // mapa req->setor pra atribuir setor ao item
+  const setorByReq={}; (reqs||[]).forEach(r=>setorByReq[r.id]=r.setor);
+  // agrega consumo por (setor+categoria+nome+unidade)
+  const map={};
+  itens.forEach(it=>{
+    const q=Number(it.qtd_enviada);
+    if(!(q>0)) return; // só conta o que foi efetivamente entregue
+    const setor=setorByReq[it.requisicao_id]||'—';
+    const key=setor+'||'+(it.categoria||'—')+'||'+it.nome+'||'+(it.unidade||'');
+    if(!map[key]) map[key]={setor,categoria:it.categoria||'—',nome:it.nome,unidade:it.unidade||'',qtd:0,pedidos:0};
+    map[key].qtd+=q; map[key].pedidos+=1;
+  });
+  state.dash.rows=Object.values(map);
+  state.dash.reqCount=(reqs||[]).length;
+  state.dash.loading=false;
+  render();
+}
+window.loadDashboardData=loadDashboardData;
+function dashFilteredRows(){
+  let rows=[...state.dash.rows];
+  if(state.dash.setor) rows=rows.filter(r=>r.setor===state.dash.setor);
+  if(state.dash.categoria) rows=rows.filter(r=>r.categoria===state.dash.categoria);
+  if(state.dash.q){const q=state.dash.q.toLowerCase(); rows=rows.filter(r=>(r.nome+' '+r.categoria).toLowerCase().includes(q));}
+  const s=state.dash.sort;
+  rows.sort((a,b)=> s==='nome'? a.nome.localeCompare(b.nome) : s==='cat'? (a.categoria.localeCompare(b.categoria)||b.qtd-a.qtd) : b.qtd-a.qtd);
+  return rows;
+}
+function dashCategoriesFor(){
+  const set=new Set(); state.dash.rows.forEach(r=>{ if(!state.dash.setor||r.setor===state.dash.setor) set.add(r.categoria); });
+  return [...set].sort();
+}
+function fmtNum(n){return Number(n).toLocaleString('pt-BR',{maximumFractionDigits:2});}
+function viewDashboard(){
+  dashDefaults();
+  const rows=dashFilteredRows();
+  const totalUnid=rows.reduce((s,r)=>s+r.qtd,0);
+  const itensDistintos=rows.length;
+  const reqCount=state.dash.reqCount||0;
+  const bySetor={}; rows.forEach(r=>bySetor[r.setor]=(bySetor[r.setor]||0)+r.qtd);
+  const byCat={}; rows.forEach(r=>byCat[r.categoria]=(byCat[r.categoria]||0)+r.qtd);
+  const catTop=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+  const cats=dashCategoriesFor();
+  const setorOpts=`<option value="">Todos setores</option>`+Object.entries(labelSetor).map(([k,v])=>`<option value="${k}" ${state.dash.setor===k?'selected':''}>${v}</option>`).join('');
+  const catOpts=`<option value="">Todas categorias</option>`+cats.map(c=>`<option value="${esc(c)}" ${state.dash.categoria===c?'selected':''}>${esc(c)}</option>`).join('');
+  const loading=state.dash.loading;
+  return `<div class="title row space"><div><h2>Dashboard de Consumo</h2><p>Consumo real (entregue) por setor, categoria e período</p></div><button class="btn bs bsm" onclick="dashExportCSV()">Exportar CSV</button></div>
+  <div class="card dash-filters" style="padding:16px;margin:14px 0">
+    <div class="dash-presets">
+      <button type="button" class="btn bs bsm" onclick="dashPreset('hoje')">Hoje</button>
+      <button type="button" class="btn bs bsm" onclick="dashPreset('7')">7 dias</button>
+      <button type="button" class="btn bs bsm" onclick="dashPreset('30')">30 dias</button>
+      <button type="button" class="btn bs bsm" onclick="dashPreset('mes')">Este mês</button>
+    </div>
+    <div class="grid g4" style="margin-top:12px">
+      <div><label class="lbl">De</label><input class="inp" type="date" value="${state.dash.ini}" onchange="dashSetField('ini',this.value)"></div>
+      <div><label class="lbl">Até</label><input class="inp" type="date" value="${state.dash.fim}" onchange="dashSetField('fim',this.value)"></div>
+      <div><label class="lbl">Setor</label><select class="inp" onchange="state.dash.setor=this.value;state.dash.categoria='';render()">${setorOpts}</select></div>
+      <div><label class="lbl">Categoria</label><select class="inp" onchange="state.dash.categoria=this.value;render()">${catOpts}</select></div>
+    </div>
+    <button type="button" class="btn bp" style="width:100%;margin-top:12px;padding:12px" onclick="loadDashboardData()">${loading?'Carregando...':'Aplicar período'}</button>
+  </div>
+  <div class="grid g3" style="margin:14px 0">
+    <div class="card stat"><strong>${reqCount}</strong><span>Requisições entregues</span></div>
+    <div class="card stat"><strong>${itensDistintos}</strong><span>Itens distintos</span></div>
+    <div class="card stat"><strong>${fmtNum(totalUnid)}</strong><span>Unidades entregues</span></div>
+  </div>
+  <div class="card" style="padding:0;margin-bottom:14px">
+    <div class="dash-th"><h3 style="margin:0">Consumo por item</h3><input class="inp" style="max-width:240px" placeholder="Buscar item/categoria" value="${esc(state.dash.q||'')}" oninput="state.dash.q=this.value;render()"></div>
+    <div class="table-wrap"><table class="table"><thead><tr>
+      <th style="cursor:pointer" onclick="state.dash.sort='nome';render()">Item</th>
+      <th style="cursor:pointer" onclick="state.dash.sort='cat';render()">Categoria</th>
+      <th>Setor</th>
+      <th style="cursor:pointer;text-align:right" onclick="state.dash.sort='qtd';render()">Entregue ▾</th>
+      <th style="text-align:right">Nº pedidos</th>
+    </tr></thead><tbody>
+    ${loading?`<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--s2)">Carregando dados...</td></tr>`:
+      (rows.length?rows.map(r=>`<tr><td><strong>${esc(r.nome)}</strong></td><td>${esc(r.categoria)}</td><td>${labelSetor[r.setor]||esc(r.setor)}</td><td style="text-align:right"><strong>${fmtNum(r.qtd)}</strong> ${esc(r.unidade)}</td><td style="text-align:right">${r.pedidos}</td></tr>`).join('')
+      :`<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--s2)">Nenhum consumo entregue neste período/filtro.</td></tr>`)}
+    </tbody></table></div>
+  </div>
+  <div class="grid g2">
+    <div class="card" style="padding:16px"><h3>Consumo por setor</h3><table class="table"><tbody>${Object.entries(labelSetor).map(([k,v])=>`<tr><td>${v}</td><td style="text-align:right"><strong>${fmtNum(bySetor[k]||0)}</strong></td></tr>`).join('')}</tbody></table></div>
+    <div class="card" style="padding:16px"><h3>Consumo por categoria</h3><table class="table"><tbody>${catTop.length?catTop.map(([c,q])=>`<tr><td>${esc(c)}</td><td style="text-align:right"><strong>${fmtNum(q)}</strong></td></tr>`).join(''):'<tr><td>Sem dados</td><td></td></tr>'}</tbody></table></div>
+  </div>`;
+}
+function dashExportCSV(){
+  const rows=dashFilteredRows();
+  const head=['item','categoria','setor','entregue','unidade','n_pedidos','periodo_ini','periodo_fim'];
+  const out=[head];
+  rows.forEach(r=>out.push([r.nome,r.categoria,labelSetor[r.setor]||r.setor,r.qtd,r.unidade,r.pedidos,state.dash.ini,state.dash.fim]));
+  const csv=out.map(r=>r.map(c=>'"'+String(c??'').replace(/"/g,'""')+'"').join(';')).join('\n');
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'})); a.download=`consumo_${state.dash.ini}_a_${state.dash.fim}.csv`; a.click();
+}
+window.dashExportCSV=dashExportCSV;
 function exportCSV(){let rows=[['numero','setor','responsavel','status','prioridade','criado_em']]; filterReqs().forEach(r=>rows.push([r.numero,r.setor,r.responsavel_nome,r.status,r.prioridade,r.criado_em])); const csv=rows.map(r=>r.map(c=>'"'+String(c??'').replace(/"/g,'""')+'"').join(';')).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='nexus_requisicoes.csv'; a.click();}
 window.exportCSV=exportCSV;
 function viewLixeira(){return `<div class="title"><h2>Lixeira Administrativa</h2><p>Somente ADM Geral. Restaure ou exclua definitivamente.</p></div>${viewReqs().replace(/<div class="title[\s\S]*?<\/div><div class="card" style="padding:14px;margin:14px 0">[\s\S]*?<\/div>/,'')}`}
