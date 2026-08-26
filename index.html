@@ -541,10 +541,51 @@ function renderLogin(){app.innerHTML=`<div class="login-bg"><div class="login-ca
 async function login(e){e.preventDefault(); const email=document.getElementById('loginEmail').value.trim(); const password=document.getElementById('loginPass').value; const {error}=await sb.auth.signInWithPassword({email,password}); if(error) toast('Login ou senha inválidos.');}
 window.login=login;
 async function routeLoad(){const t=state.tab||navFor()[0][0]; if(t==='dashboard') await loadDashboardData(); if(['requisicoes','painel','meus','lixeira'].includes(t)) await loadReqs(); if(['nova','catalogo'].includes(t)) await loadCatalog(); if(t==='usuarios') await loadUsers(); if(t==='auditoria') await loadAudit(); render();}
+/* ------------------------------------------------------------------
+   Paginação segura (PostgREST corta em 1000 linhas SEM avisar).
+   fetchAllPaged executa a query em páginas até esgotar os resultados.
+   IMPORTANTE: a query precisa ter ordenação determinística (com 'id'
+   como último critério de desempate), senão a paginação pode pular
+   ou repetir linhas.
+-------------------------------------------------------------------*/
+const PAGE_SIZE=1000;
+async function fetchAllPaged(buildQuery){
+  const out=[]; let from=0;
+  for(;;){
+    const {data,error}=await buildQuery().range(from,from+PAGE_SIZE-1);
+    if(error) throw error;
+    const rows=data||[];
+    out.push(...rows);
+    if(rows.length<PAGE_SIZE) break;
+    from+=PAGE_SIZE;
+  }
+  return out;
+}
+/* Busca itens de várias requisições, em lotes de ids (limite de URL)
+   e paginada dentro de cada lote (limite de linhas). */
+async function fetchReqItens(ids,cols='*'){
+  const out=[]; const ID_CHUNK=100;
+  for(let i=0;i<ids.length;i+=ID_CHUNK){
+    const slice=ids.slice(i,i+ID_CHUNK);
+    const part=await fetchAllPaged(()=>sb.from('requisicao_itens').select(cols)
+      .in('requisicao_id',slice)
+      .order('categoria').order('nome').order('id'));
+    out.push(...part);
+  }
+  return out;
+}
+
 async function loadCatalog(){
   state.catalogError=null;
-  const {data:cats,error:catErr}=await sb.from('catalog_categories').select('id,setor,nome,ativo').order('setor').order('nome');
-  const {data:items,error:itemErr}=await sb.from('catalog_items').select('id,setor,categoria_nome,nome,unidade,ativo').order('setor').order('categoria_nome').order('nome');
+  let cats=null,items=null,catErr=null,itemErr=null;
+  try{
+    cats=await fetchAllPaged(()=>sb.from('catalog_categories').select('id,setor,nome,ativo')
+      .order('setor').order('nome').order('id'));
+  }catch(e){catErr=e;}
+  try{
+    items=await fetchAllPaged(()=>sb.from('catalog_items').select('id,setor,categoria_nome,nome,unidade,ativo')
+      .order('setor').order('categoria_nome').order('nome').order('id'));
+  }catch(e){itemErr=e;}
   if(catErr || itemErr){
     state.catalogError = (catErr?.message || itemErr?.message || 'Erro ao carregar catálogo');
     console.error('Erro catálogo:', catErr || itemErr);
@@ -552,10 +593,20 @@ async function loadCatalog(){
   state.categories=cats||[]; state.catalog=items||[];
 }
 async function loadReqs(){
-  let q=sb.from('requisicoes').select('*').order('criado_em',{ascending:false});
-  if(state.tab==='lixeira') q=q.eq('status','lixeira'); else q=q.neq('status','lixeira');
-  const {data,error}=await q; if(error){toast(error.message); return;} state.reqs=data||[];
-  const ids=state.reqs.map(r=>r.id); state.reqItems={}; if(ids.length){const {data:items}=await sb.from('requisicao_itens').select('*').in('requisicao_id',ids).order('categoria').order('nome'); (items||[]).forEach(it=>{(state.reqItems[it.requisicao_id] ||= []).push(it)});}
+  try{
+    const reqs=await fetchAllPaged(()=>{
+      let q=sb.from('requisicoes').select('*').order('criado_em',{ascending:false}).order('id');
+      return state.tab==='lixeira' ? q.eq('status','lixeira') : q.neq('status','lixeira');
+    });
+    state.reqs=reqs;
+    const ids=state.reqs.map(r=>r.id); state.reqItems={};
+    if(ids.length){
+      const items=await fetchReqItens(ids);
+      items.forEach(it=>{(state.reqItems[it.requisicao_id] ||= []).push(it)});
+    }
+  }catch(err){
+    toast('Erro ao carregar requisições: '+(err.message||err));
+  }
 }
 function filterReqs(){let arr=[...state.reqs]; if(state.tab==='meus'&&isSetor()) arr=arr.filter(r=>r.setor===state.profile.setor); if(state.filters.q){const q=state.filters.q.toLowerCase(); arr=arr.filter(r=>(r.numero+' '+r.responsavel_nome+' '+(r.observacoes||'')).toLowerCase().includes(q));} if(state.filters.setor) arr=arr.filter(r=>r.setor===state.filters.setor); if(state.filters.status) arr=arr.filter(r=>r.status===state.filters.status); if(state.filters.prioridade) arr=arr.filter(r=>r.prioridade===state.filters.prioridade); if(state.filters.data) arr=arr.filter(r=>r.data_requisicao===state.filters.data); return arr;}
 function clearReqFilters(){['q','setor','status','prioridade','data'].forEach(k=>delete state.filters[k]);}
@@ -860,25 +911,21 @@ async function loadDashboardData(){
   // Janela [ini 00:00, fim+1 00:00) sobre criado_em; apenas entregues.
   const ini=state.dash.ini, fim=state.dash.fim;
   const fimNext=(()=>{const d=new Date(fim+'T00:00:00');d.setDate(d.getDate()+1);d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,10);})();
-  const {data:reqs,error}=await sb.from('requisicoes')
-    .select('id,setor,numero,status,criado_em')
-    .eq('status','entregue')
-    .gte('criado_em',ini+'T00:00:00')
-    .lt('criado_em',fimNext+'T00:00:00')
-    .order('criado_em',{ascending:false});
-  if(error){state.dash.loading=false;toast(error.message);render();return;}
-  const ids=(reqs||[]).map(r=>r.id);
-  let itens=[];
-  if(ids.length){
-    // busca em lotes pra evitar limite de URL/linhas
-    for(let i=0;i<ids.length;i+=200){
-      const slice=ids.slice(i,i+200);
-      const {data:part,error:ie}=await sb.from('requisicao_itens')
-        .select('requisicao_id,categoria,nome,unidade,qtd_enviada')
-        .in('requisicao_id',slice);
-      if(ie){state.dash.loading=false;toast(ie.message);render();return;}
-      itens=itens.concat(part||[]);
+  let reqs=[], itens=[];
+  try{
+    reqs=await fetchAllPaged(()=>sb.from('requisicoes')
+      .select('id,setor,numero,status,criado_em')
+      .eq('status','entregue')
+      .gte('criado_em',ini+'T00:00:00')
+      .lt('criado_em',fimNext+'T00:00:00')
+      .order('criado_em',{ascending:false}).order('id'));
+    const ids=reqs.map(r=>r.id);
+    if(ids.length){
+      // lotes por id (limite de URL) + paginação por linhas (limite de 1000)
+      itens=await fetchReqItens(ids,'requisicao_id,categoria,nome,unidade,qtd_enviada');
     }
+  }catch(err){
+    state.dash.loading=false;toast('Erro ao carregar dados do painel: '+(err.message||err));render();return;
   }
   // mapa req->setor pra atribuir setor ao item
   const setorByReq={}; (reqs||[]).forEach(r=>setorByReq[r.id]=r.setor);
